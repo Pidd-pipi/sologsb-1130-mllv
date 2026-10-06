@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useShotStore } from '../stores/shotStore';
 import { useFrameStore } from '../stores/frameStore';
+import { useBeatStore } from '../stores/beatStore';
 import { useFrameSequence } from '../hooks/useFrameSequence';
 import { useProgress } from '../hooks/useProgress';
 import * as api from '../db/api';
@@ -17,6 +18,7 @@ import { FIXATION_OPTIONS, type Fixation, type PropState } from '../types/prop';
 import { SHOT_STATUS_OPTIONS, type ShotStatus } from '../types/shot';
 import type { FrameEntry } from '../types/frame';
 import { SHOT_COUNT_OPTIONS } from '../types/frame';
+import type { Beat, BeatLink } from '../types/beat';
 import { today } from '../utils/format';
 import FrameStrip from '../components/common/FrameStrip.vue';
 import ExposureForm from '../components/common/ExposureForm.vue';
@@ -28,6 +30,7 @@ const route = useRoute();
 const router = useRouter();
 const shotStore = useShotStore();
 const frameStore = useFrameStore();
+const beatStore = useBeatStore();
 const { frames, selectedFrameNo } = storeToRefs(frameStore);
 
 const { insertAfter, removeAt, move, patch, select, syncShotRange } = useFrameSequence();
@@ -61,6 +64,7 @@ async function bootstrap(id: number) {
   notFound.value = false;
   await frameStore.loadForShot(id);
   await loadTakes();
+  if (!beatStore.ready) await beatStore.load();
   props.value = await api.listProps(id);
   if (typeof row.id === 'number') shotStore.currentId = row.id;
   const first = frames.value[0];
@@ -198,6 +202,36 @@ const consumed = computed(() => {
 function speedOf(frame: FrameEntry) {
   return estimateSpeed(frame.propOffsetMm, shot.value?.fps ?? 24);
 }
+
+/* ---------------- 多机位节拍视图 ---------------- */
+
+/** 本镜头参与的节拍（主机位或挂接机位） */
+const beatsForShot = computed<Beat[]>(() => (shot.value?.id ? beatStore.beatsOfShot(shot.value.id) : []));
+/** 本镜头作为主机位的节拍（帧数变化会触发联动重算） */
+const masterBeats = computed(() => beatsForShot.value.filter((b) => b.masterShotId === shotId.value));
+/** 本镜头作为挂接机位的节拍 */
+const linkedBeats = computed(() =>
+  beatsForShot.value
+    .filter((b) => b.masterShotId !== shotId.value)
+    .map((b) => ({ beat: b, link: b.links.find((l) => l.shotId === shotId.value) as BeatLink })),
+);
+const reviewCount = computed(() =>
+  linkedBeats.value.reduce((n, x) => n + (x.link.needsReview ? 1 : 0), 0),
+);
+
+async function acceptLink(beat: Beat) {
+  await beatStore.acceptReview(beat.id as number, shotId.value);
+  flash('已采用重算帧位');
+}
+
+async function keepLink(beat: Beat) {
+  await beatStore.keepCurrent(beat.id as number, shotId.value);
+  flash('已保留原帧位');
+}
+
+async function toggleLink(beat: Beat, link: BeatLink) {
+  await beatStore.setLinkStatus(beat.id as number, shotId.value, link.status === 'shot' ? 'unshot' : 'shot');
+}
 </script>
 
 <template>
@@ -299,6 +333,57 @@ function speedOf(frame: FrameEntry) {
             {{ p.name }} ({{ p.posX }}, {{ p.posY }}, {{ p.posZ }}) mm · 旋转 {{ p.rotation }}°
           </span>
         </div>
+      </div>
+
+      <div class="panel" data-testid="shot-beats">
+        <div class="panel-head">
+          <h2>多机位动作节拍</h2>
+          <div class="head-actions">
+            <span v-if="reviewCount" class="warn-chip" data-testid="shot-review-count">{{ reviewCount }} 个节拍待复核</span>
+            <button type="button" class="btn small" @click="router.push('/beats')">去节拍台编排</button>
+          </div>
+        </div>
+
+        <div v-if="!beatsForShot.length" class="muted">
+          本镜头尚未参与任何动作节拍。可在「多机位节拍」页把它设为主机位，或挂接到已有节拍。
+        </div>
+
+        <table v-else class="table">
+          <thead>
+            <tr><th>节拍</th><th>角色</th><th>动作帧位</th><th>状态</th><th>重算建议</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="b in masterBeats" :key="`m-${b.id}`">
+              <td class="mono">{{ b.code }} · {{ b.name }}</td>
+              <td><span class="chip">主机位（基准 {{ b.masterFps }}fps）</span></td>
+              <td class="mono">{{ b.anchors.map((a) => a.masterFrame).join(' / ') || '—' }}</td>
+              <td class="muted">{{ b.links.length }} 个挂接机位</td>
+              <td class="muted">本机帧数变化自动触发重算</td>
+              <td><button type="button" class="btn tiny" @click="router.push('/beats')">编排</button></td>
+            </tr>
+            <tr v-for="{ beat, link } in linkedBeats" :key="`l-${beat.id}`" :class="{ review: link.needsReview }">
+              <td class="mono">{{ beat.code }} · {{ beat.name }}</td>
+              <td><span class="chip alt">挂接机位（{{ link.fps }}fps）</span></td>
+              <td class="mono">{{ link.frames.join(' / ') || '—' }}</td>
+              <td>
+                <button type="button" class="btn tiny" :class="{ primary: link.status === 'shot' }" @click="toggleLink(beat, link)">
+                  {{ link.status === 'shot' ? '已拍（保留帧位）' : '未拍（自动重算）' }}
+                </button>
+              </td>
+              <td>
+                <span v-if="link.needsReview" class="warn" data-testid="shot-link-review">建议 {{ link.reviewFrames.join(' / ') }}</span>
+                <span v-else class="muted">已与主机位同步</span>
+              </td>
+              <td class="row-actions">
+                <template v-if="link.needsReview">
+                  <button type="button" class="btn tiny primary" @click="acceptLink(beat)">采用重算</button>
+                  <button type="button" class="btn tiny" @click="keepLink(beat)">保留原值</button>
+                </template>
+                <button type="button" class="btn tiny" @click="router.push('/beats')">详情</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div class="panel">
@@ -558,6 +643,22 @@ h1 .mono {
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
+}
+.chip.alt {
+  background: #f3fbf6;
+  border-color: #cdeedd;
+  color: #1d7a4c;
+}
+.warn-chip {
+  background: #fff4e5;
+  border: 1px solid #ffe1b3;
+  color: #b26a00;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+.table tbody tr.review {
+  background: #fff8ec;
 }
 .take-form,
 .prop-form {

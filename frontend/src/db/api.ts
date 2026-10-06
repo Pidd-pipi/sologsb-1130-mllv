@@ -4,6 +4,7 @@ import type { Shot } from '../types/shot';
 import type { FrameEntry } from '../types/frame';
 import type { PropState } from '../types/prop';
 import type { TakeLog } from '../types/take';
+import type { Beat, BeatConflict } from '../types/beat';
 
 export async function initDb(): Promise<void> {
   if (!db.isOpen()) await db.open();
@@ -132,4 +133,79 @@ export async function deleteTake(id: number): Promise<void> {
 /** 按实拍张数回写镜头进度（Shot 表保存完成百分比快照，便于总览页快速读取） */
 export async function syncShotProgress(shotId: number, percent: number): Promise<void> {
   await db.shots.update(shotId, toPlain({ progressPercent: percent, updatedAt: Date.now() }));
+}
+
+/* ---------------- beats（多机位动作节拍） ---------------- */
+
+export async function listBeats(): Promise<Beat[]> {
+  const rows = await db.beats.toArray();
+  return rows.sort((a, b) => a.code.localeCompare(b.code, 'zh-Hans-CN'));
+}
+
+export async function getBeat(id: number): Promise<Beat | undefined> {
+  return db.beats.get(id);
+}
+
+export async function getBeatByCode(code: string): Promise<Beat | undefined> {
+  return db.beats.where('code').equals(code).first();
+}
+
+/** 查找以某镜头为主机位或挂接机位的全部节拍 */
+export async function listBeatsByShot(shotId: number): Promise<Beat[]> {
+  const all = await db.beats.toArray();
+  return all
+    .filter((b) => b.masterShotId === shotId || b.links.some((l) => l.shotId === shotId))
+    .sort((a, b) => a.code.localeCompare(b.code, 'zh-Hans-CN'));
+}
+
+export async function addBeat(beat: Beat): Promise<number> {
+  return db.beats.add(toPlain(beat));
+}
+
+export async function updateBeat(id: number, patch: Partial<Beat>): Promise<void> {
+  await db.beats.update(id, toPlain({ ...patch, updatedAt: Date.now() }));
+}
+
+export async function bulkPutBeats(beats: Beat[]): Promise<void> {
+  if (!beats.length) return;
+  await db.beats.bulkPut(beats.map((b) => toPlain(b)));
+}
+
+export async function deleteBeat(id: number): Promise<void> {
+  await db.transaction('rw', db.beats, db.beatConflicts, async () => {
+    const beat = await db.beats.get(id);
+    await db.beats.delete(id);
+    if (beat) await db.beatConflicts.where('beatCode').equals(beat.code).delete();
+  });
+}
+
+/* ---------------- beat conflicts（离线合并冲突，两版并列） ---------------- */
+
+export async function listConflicts(): Promise<BeatConflict[]> {
+  const rows = await db.beatConflicts.toArray();
+  return rows
+    .filter((c) => !c.resolved)
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function addConflict(conflict: BeatConflict): Promise<number> {
+  // 同一节拍保留一条未决冲突：再次合并时更新 incoming 版本
+  const existing = await db.beatConflicts
+    .where('beatCode')
+    .equals(conflict.beatCode)
+    .filter((c) => !c.resolved)
+    .first();
+  if (existing) {
+    await db.beatConflicts.update(existing.id as number, toPlain({ ...conflict, id: existing.id }));
+    return existing.id as number;
+  }
+  return db.beatConflicts.add(toPlain(conflict));
+}
+
+export async function resolveConflict(id: number): Promise<void> {
+  await db.beatConflicts.update(id, { resolved: true });
+}
+
+export async function deleteConflict(id: number): Promise<void> {
+  await db.beatConflicts.delete(id);
 }

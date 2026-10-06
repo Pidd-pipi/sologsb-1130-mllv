@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import * as api from '../db/api';
 import { toPlain } from '../db';
 import { buildFrameRange, framesToDuration } from '../utils/frameMath';
+import { useBeatStore } from './beatStore';
 import type { Shot } from '../types/shot';
 import { createEmptyShot } from '../types/shot';
 import type { FrameEntry } from '../types/frame';
@@ -65,10 +66,13 @@ export const useShotStore = defineStore('shot', {
       this.currentId = id;
       return saved;
     },
-    /** 改时长/帧率后重排帧区间，并同步到该镜头的全部帧条目 */
+    /** 改时长/帧率后重排帧区间，并同步到该镜头的全部帧条目；
+     *  若该镜头是动作节拍主机位，帧数/帧率一变则联动重算各挂接机位：
+     *  未拍立即换算，已拍保留待复核；重算失败恢复动手前记录。 */
     async update(id: number, patch: Partial<Shot>) {
       const existing = this.shots.find((s) => s.id === id);
       if (!existing) return;
+      const prevCount = existing.endFrame - existing.startFrame + 1;
       const next = toPlain({ ...existing, ...patch });
       const range = buildFrameRange(next.startFrame, next.durationSec, next.fps);
       next.startFrame = range.startFrame;
@@ -76,6 +80,24 @@ export const useShotStore = defineStore('shot', {
       await api.updateShot(id, next);
       this.shots = this.shots.map((s) => (s.id === id ? { ...next, id } : s));
       await this.rerangeFrames(id);
+
+      const nextCount = next.endFrame - next.startFrame + 1;
+      const frameTimelineChanged = prevCount !== nextCount || existing.fps !== next.fps;
+      if (frameTimelineChanged) {
+        const beatStore = useBeatStore();
+        if (!beatStore.ready) await beatStore.load();
+        if (beatStore.beatsOfShot(id).some((b) => b.masterShotId === id)) {
+          try {
+            await beatStore.recomputeForMaster(id);
+          } catch (e) {
+            // 重算失败：恢复动手前记录（节拍由事务+快照回滚，镜头在这里还原）
+            await api.updateShot(id, existing);
+            this.shots = this.shots.map((s) => (s.id === id ? existing : s));
+            await this.rerangeFrames(id);
+            throw e;
+          }
+        }
+      }
     },
     /** 把帧序号重新压缩进 [startFrame, endFrame]，并重算时长 */
     async rerangeFrames(shotId: number) {
