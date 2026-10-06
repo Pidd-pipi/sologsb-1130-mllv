@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:beats": "esbuild scripts/beat.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/beat.test.mjs --log-level=warning && node node_modules/.tmp/beat.test.mjs",
+    "test:migration": "esbuild scripts/migration.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/migration.test.mjs --log-level=warning && node node_modules/.tmp/migration.test.mjs",
+    "test": "npm run test:beats && npm run test:migration"
   },
   "dependencies": {
     "dexie": "^3.2.7",
@@ -18,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^20.17.6",
     "@vitejs/plugin-vue": "^5.2.0",
+    "fake-indexeddb": "^6.0.0",
     "typescript": "~5.6.3",
     "vite": "^5.4.11",
     "vue-tsc": "^2.1.10"

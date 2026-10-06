@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useShotStore } from '../stores/shotStore';
 import { useFrameStore } from '../stores/frameStore';
+import { useBeatStore } from '../stores/beatStore';
 import { useProgress } from '../hooks/useProgress';
 import { listAllFrames } from '../db/api';
 import { framesToDuration } from '../utils/frameMath';
@@ -20,6 +21,7 @@ import type { FrameEntry } from '../types/frame';
 const router = useRouter();
 const shotStore = useShotStore();
 const frameStore = useFrameStore();
+const beatStore = useBeatStore();
 const { shots } = storeToRefs(shotStore);
 const { summaries, overall, loadTakes, loading } = useProgress();
 
@@ -72,6 +74,16 @@ function goDetail(id: number | undefined) {
         <button type="button" class="btn" @click="router.push('/frames')">帧序编排台</button>
       </div>
     </header>
+
+    <button
+      v-if="beatStore.pendingConflictCount > 0"
+      type="button"
+      class="conflict-banner"
+      data-testid="overview-conflict-banner"
+      @click="router.push('/beats')"
+    >
+      ⚠ 有 {{ beatStore.conflicted.length }} 条动作节拍存在 {{ beatStore.pendingConflictCount }} 个离线合并冲突待确认，确认前相关帧序保持不变 —— 点击前往处理
+    </button>
 
     <div class="stat-row">
       <div class="stat">
@@ -276,5 +288,19 @@ h1 {
 }
 .footer-note {
   margin: 10px 0 0;
+}
+.conflict-banner {
+  text-align: left;
+  width: 100%;
+  background: #fff4e5;
+  border: 1px solid #ffd8a8;
+  color: #8a5200;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.conflict-banner:hover {
+  background: #ffedd4;
 }
 </style>

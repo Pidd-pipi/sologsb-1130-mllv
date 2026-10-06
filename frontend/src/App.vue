@@ -1,11 +1,23 @@
 <script setup lang="ts">
 /** 应用外壳：顶部导航 + 路由出口 */
+import { onMounted } from 'vue';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 import { navItems } from './router';
 import { useUiStore } from './stores/uiStore';
+import { useBeatStore } from './stores/beatStore';
 
 const route = useRoute();
 const ui = useUiStore();
+const beatStore = useBeatStore();
+
+onMounted(async () => {
+  // 预加载动作节拍，主机位帧变时即可在任意页面完成联动重算
+  try {
+    await beatStore.load();
+  } catch (e) {
+    console.error('[gbstopmotion] 动作节拍加载失败', e);
+  }
+});
 
 function isActive(path: string): boolean {
   if (path === '/') return route.path === '/';

@@ -164,7 +164,7 @@ function shiftFrame(frame: FrameEntry, dir: -1 | 1) {
           <div class="head-actions">
             <button type="button" class="btn small" data-testid="board-insert" @click="doInsert">插入帧</button>
             <button type="button" class="btn small danger" data-testid="board-remove" @click="doRemove">删除选中帧</button>
-            <button type="button" class="btn small" @click="syncShotRange">重算时长</button>
+            <button type="button" class="btn small" @click="() => syncShotRange()">重算时长</button>
           </div>
         </div>
         <FrameStrip :frames="ordered" :selected="selectedFrameNo" @update:selected="select" @reorder="doReorder" @patch="patchFrame" />

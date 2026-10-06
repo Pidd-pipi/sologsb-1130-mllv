@@ -23,6 +23,7 @@ import ExposureForm from '../components/common/ExposureForm.vue';
 import ShotProgress from '../components/common/ShotProgress.vue';
 import StatusTag from '../components/common/StatusTag.vue';
 import EmptyState from '../components/common/EmptyState.vue';
+import ShotBeatPanel from '../components/common/ShotBeatPanel.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -30,7 +31,7 @@ const shotStore = useShotStore();
 const frameStore = useFrameStore();
 const { frames, selectedFrameNo } = storeToRefs(frameStore);
 
-const { insertAfter, removeAt, move, patch, select, syncShotRange } = useFrameSequence();
+const { insertAfter, removeAt, move, patch, select, syncShotRange, changeDuration: applyDuration, changeFps: applyFps } = useFrameSequence();
 const { registerTake, summaries, loadTakes, computeProgress } = useProgress();
 
 const props = ref<PropState[]>([]);
@@ -98,15 +99,14 @@ async function changeStatus(status: ShotStatus) {
 
 async function changeDuration(value: number) {
   if (!shot.value) return;
-  await shotStore.update(shotId.value, { durationSec: value });
-  flash('已按新时长重排帧区间');
+  await applyDuration(value);
+  flash('已按新时长重排帧区间，多机位节拍帧位已联动重算');
 }
 
 async function changeFps(value: number) {
   if (!shot.value) return;
-  await shotStore.update(shotId.value, { fps: value });
-  await syncShotRange();
-  flash('已按新帧率重排帧区间');
+  await applyFps(value);
+  flash('已按新帧率重排帧区间，多机位节拍帧位已按帧率换算');
 }
 
 async function addFrameWithExposure() {
@@ -306,7 +306,7 @@ function speedOf(frame: FrameEntry) {
           <h2>帧条目表格</h2>
           <div class="head-actions">
             <button type="button" class="btn small" data-testid="insert-frame" @click="addFrameWithExposure">插入帧</button>
-            <button type="button" class="btn small" @click="syncShotRange">重算时长</button>
+            <button type="button" class="btn small" @click="() => syncShotRange()">重算时长</button>
           </div>
         </div>
 
@@ -371,6 +371,14 @@ function speedOf(frame: FrameEntry) {
             <button type="button" class="btn primary" data-testid="take-submit" @click="submitTake">登记并回写进度</button>
           </div>
         </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>多机位动作节拍</h2>
+          <span class="muted">共用节拍、按各自帧率换算帧位；主机位帧变后已拍帧位在此复核</span>
+        </div>
+        <ShotBeatPanel :shot="shot" />
       </div>
 
       <div class="panel">
